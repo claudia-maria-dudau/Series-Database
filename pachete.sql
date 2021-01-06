@@ -1,5 +1,5 @@
 -- Pachet care sa contina toate obiectele definite
-CREATE OR REPLACE PACKAGE pachet_1 AS
+CREATE OR REPLACE PACKAGE pachet_1 IS
     PROCEDURE modificare_categorii
         (serial series.title%TYPE,
          categ1 VARCHAR2,
@@ -20,7 +20,7 @@ CREATE OR REPLACE PACKAGE pachet_1 AS
 END pachet_1;
 /
 
-CREATE OR REPLACE PACKAGE BODY pachet_1 AS
+CREATE OR REPLACE PACKAGE BODY pachet_1 IS
     PROCEDURE modificare_categorii
         (serial series.title%TYPE,
          categ1 VARCHAR2,
@@ -310,3 +310,203 @@ CREATE OR REPLACE PACKAGE BODY pachet_1 AS
     END;
 END pachet_1;
 /
+
+
+-- Pachet care sa includa tipuri de date complexe si obiecte necesare pentru actiuni integrate
+-- Sa se afiseze informatii despre actorii principali ai unui serial
+-- (actori care joaca pe durata a cel putin 75% din durata intregului serial):
+-- nume, prenume, data nasterii, numele personajului pe care il joaca, lista episoadelor in care apare
+
+CREATE OR REPLACE PACKAGE inf_actori IS  
+    -- tipuri de date
+    TYPE rec_pers IS RECORD (prenume characters.first_name%TYPE,
+                             nume characters.last_name%TYPE);
+    TYPE tab_pers IS TABLE OF rec_pers;
+    TYPE eps IS TABLE OF episodes.title%TYPE;
+    TYPE rec_actori IS RECORD (prenume actors.first_name%TYPE,
+                               nume actors.last_name%TYPE,
+                               data_nastere actors.birth_date%TYPE,
+                               personaje tab_pers,
+                               episoade eps);
+    TYPE tab_actori IS TABLE OF rec_actori;
+    
+    -- Obtinere durata in care un actor joaca intr-un serial
+    FUNCTION screen_time_serial
+        (prenume actors.first_name%TYPE,
+         nume actors.last_name%TYPE,
+         nume_serial series.title%TYPE)
+    RETURN NUMBER;
+    
+    -- Obtinere despre actorii principali ai unui serial
+    FUNCTION actori_principali
+        (nume_serial series.title%TYPE,
+         actori OUT tab_actori)
+    RETURN NUMBER;
+    
+    -- Afisare actorii principali ai unui serial
+    PROCEDURE afis_actori_principali
+        (nume_serial series.title%TYPE);
+                 
+END inf_actori;
+/
+
+CREATE OR REPLACE PACKAGE BODY inf_actori IS
+    -- PRIVATE
+    -- Functie ce determina durata totala a unui serial
+    FUNCTION durata_serial
+        (nume_serial series.title%TYPE)
+    RETURN NUMBER IS
+        durata NUMBER(5);
+    BEGIN
+        SELECT SUM(minutes) INTO durata
+        FROM episodes JOIN seasons USING (season_id)
+                      JOIN series s USING (series_id)
+        WHERE s.title = INITCAP(nume_serial);
+        
+        RETURN durata;
+    END;
+    
+    -- Functie ce determina durata in care un actor joaca intr-un sezon    
+    FUNCTION screen_time_sez
+        (prenume actors.first_name%TYPE,
+         nume actors.last_name%TYPE,
+         nume_serial series.title%TYPE,
+         nr_sez seasons.season_number%TYPE)
+    RETURN NUMBER IS
+        screen_time NUMBER(5);
+    BEGIN
+        SELECT SUM(minutes) INTO screen_time
+        FROM episodes JOIN seasons USING(season_id)
+                      JOIN series s USING(series_id)
+                      JOIN appearing_in USING (episode_id)
+                      JOIN characters USING (character_id)
+                      JOIN playing USING (character_id)
+                      JOIN actors a USING (actor_id)
+        WHERE s.title = INITCAP(nume_serial)
+          AND season_number = nr_sez
+          AND a.first_name = INITCAP(prenume)
+          AND a.last_name = INITCAP(nume);
+        
+        RETURN screen_time;
+    END;
+    
+    
+    -- PUBLIC
+    FUNCTION screen_time_serial
+        (prenume actors.first_name%TYPE,
+         nume actors.last_name%TYPE,
+         nume_serial series.title%TYPE)
+    RETURN NUMBER IS 
+        screen_time NUMBER(5) := 0;
+    BEGIN
+        -- determinare screen_time_sez pt actorul pt fiecare sezon al serialului
+        FOR sez IN (SELECT season_number
+                       FROM seasons JOIN series s USING (series_id)
+                       WHERE s.title = INITCAP(nume_serial)) 
+                      LOOP
+         
+            screen_time := screen_time + screen_time_sez (prenume, nume, nume_serial, sez.season_number);
+        END LOOP;
+        
+        RETURN screen_time;
+    END;
+    
+    FUNCTION actori_principali
+        (nume_serial series.title%TYPE,
+         actori OUT tab_actori)
+    RETURN NUMBER IS
+        TYPE rec_act IS RECORD (prenume actors.first_name%TYPE,
+                                nume actors.last_name%TYPE,
+                                data_nastere actors.birth_date%TYPE);
+        TYPE tab_act IS TABLE OF rec_act;
+        v_actori tab_act;
+        v_pers tab_pers;
+        v_eps eps;
+        nr_act NUMBER(2) := 0;
+    BEGIN
+        actori := tab_actori();
+        
+        -- obtinere actorii ce joaca in serialul dat
+        SELECT a.first_name, a.last_name, a.birth_date BULK COLLECT INTO v_actori
+        FROM actors a JOIN playing USING (actor_id)
+                      JOIN series USING (series_id)
+        WHERE title = INITCAP(nume_serial);
+        
+        IF v_actori.COUNT = 0 THEN
+            RAISE_APPLICATION_ERROR(-20009, 'Numele serialului dat nu este bun');
+            RETURN -1;
+        END IF;
+        
+        FOR i IN v_actori.FIRST..v_actori.LAST LOOP
+            IF screen_time_serial(v_actori(i).prenume, v_actori(i).nume, nume_serial) >= 0.75 * durata_serial(nume_serial) THEN
+                nr_act := nr_act + 1;
+                
+                -- obtinere personajele jucate de actor       
+                SELECT first_name, last_name BULK COLLECT INTO v_pers
+                FROM characters JOIN playing USING(character_id)
+                WHERE actor_id = (SELECT actor_id
+                                  FROM actors
+                                  WHERE first_name = v_actori(i).prenume
+                                    AND last_name = v_actori(i).nume)
+                  AND series_id = (SELECT series_id
+                                   FROM series
+                                   WHERE title = INITCAP(nume_serial));
+                
+                 -- obtinere lista episoade in care joaca actorul
+                 SELECT e.title BULK COLLECT INTO v_eps
+                 FROM episodes e JOIN seasons USING(season_id)
+                                 JOIN series s USING(series_id)
+                                 JOIN appearing_in USING (episode_id)
+                                 JOIN characters USING (character_id)
+                                 JOIN playing USING (character_id)
+                                 JOIN actors a USING (actor_id)
+                WHERE s.title = INITCAP(nume_serial)
+                  AND a.first_name = v_actori(i).prenume
+                  AND a.last_name = v_actori(i).nume;
+                  
+                actori.EXTEND;
+                actori(actori.LAST).prenume := v_actori(i).prenume;
+                actori(actori.LAST).nume := v_actori(i).nume;
+                actori(actori.LAST).data_nastere := v_actori(i).data_nastere;
+                actori(actori.LAST).personaje := v_pers;
+                actori(actori.LAST).episoade := v_eps;
+            END IF;
+        END LOOP;
+        
+        RETURN nr_act;
+    END;
+    
+    PROCEDURE afis_actori_principali
+        (nume_serial series.title%TYPE)
+    IS
+        actori tab_actori;
+        nr_act NUMBER(2);
+    BEGIN
+        nr_act := actori_principali(nume_serial, actori);
+        
+        DBMS_OUTPUT.PUT_LINE('Serialul ' || INITCAP(nume_serial) || ' are ' || nr_act || ' actori principali');
+        FOR i IN 1..nr_act LOOP
+            DBMS_OUTPUT.PUT_LINE(i || '. ' || actori(i). prenume || ' ' || actori(i).nume || ' - ' || actori(i).data_nastere);
+            
+            DBMS_OUTPUT.PUT_LINE('-- Personaje jucate: ');
+            FOR j IN actori(i).personaje.FIRST..actori(i).personaje.LAST LOOP
+                DBMS_OUTPUT.PUT_LINE(actori(i).personaje(j).prenume || ' ' || actori(i).personaje(j).nume);
+            END LOOP;
+            
+            DBMS_OUTPUT.PUT_LINE('-- Episoade in care apare: ');
+            FOR j IN actori(i).episoade.FIRST..actori(i).episoade.LAST LOOP
+                DBMS_OUTPUT.PUT_LINE(actori(i).episoade(j));
+            END LOOP;
+            
+            DBMS_OUTPUT.PUT_LINE('');
+        END LOOP;
+    END;
+    
+END inf_actori;
+/
+
+-- merge
+EXECUTE inf_actori.afis_actori_principali('Supernatural');
+
+-- nu exista serialul in baza de date => nu merge
+EXECUTE inf_actori.afis_actori_principali('The Flash');

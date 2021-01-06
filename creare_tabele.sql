@@ -45,8 +45,7 @@ CREATE TABLE episodes
 CREATE TABLE characters
     (character_id NUMBER(3) PRIMARY KEY,
      first_name VARCHAR2(40) NOT NULL,
-     last_name VARCHAR2(40),
-     series_id NUMBER(3) REFERENCES series(series_id) ON DELETE CASCADE);
+     last_name VARCHAR2(40));
 
 CREATE TABLE appearing_in
     (episode_id NUMBER(3) REFERENCES episodes(episode_id) ON DELETE CASCADE,

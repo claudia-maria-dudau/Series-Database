@@ -35,21 +35,24 @@ ALTER TRIGGER modificare_serial DISABLE;
 
 
 -- Trigger LMD la nivel de linie
--- Un sezon nu poate sa aiba mai mult de 3 episoade
+-- Un serial nu poate sa aiba mai mult de 4 episoade
 
 -- creare copie a tabelului episodes
 CREATE TABLE episodes_cpy
 AS SELECT * FROM episodes;
-
+                     
 -- functie care returneaza nr de episoade ale unui sezon
-CREATE OR REPLACE FUNCTION nr_episoade_sezon
+CREATE OR REPLACE FUNCTION nr_episoade_serial
     (id_sez seasons.season_id%TYPE)
 RETURN NUMBER IS
     nr_ep NUMBER(1);
 BEGIN
     SELECT COUNT(*) INTO nr_ep
-    FROM episodes_cpy
-    WHERE season_id = id_sez;
+    FROM episodes_cpy JOIN seasons USING(season_id)
+                      JOIN series USING(series_id)
+    WHERE series_id = (SELECT series_id
+                       FROM seasons
+                       WHERE season_id = id_sez);
     
     RETURN nr_ep;
 END;
@@ -62,8 +65,8 @@ CREATE OR REPLACE TRIGGER modificare_episodes
     BEFORE INSERT OR UPDATE on episodes
     FOR EACH ROW
 BEGIN
-    IF nr_episoade_sezon(:NEW.season_id) = 3 THEN
-        RAISE_APPLICATION_ERROR(-20011, 'Un sezon nu poate avea mai mult de 3 episoade');
+    IF nr_episoade_serial(:NEW.season_id) = 4 THEN
+        RAISE_APPLICATION_ERROR(-20011, 'Un serial nu poate avea mai mult de 4 episoade');
     END IF;
 END;
 /
@@ -96,25 +99,26 @@ BEGIN
 END;
 /
 
--- sezonul are doar 2 episoade => merge
+-- serialul are doar 3 episoade => merge
 INSERT INTO episodes
 VALUES (19, 19, 'No More Heartbreaks', 'Everyone joins together in an attempt to save Cami''s life.',
         41, '29-APR-2016', 9.3, 6);
         
--- sezonul are deja 3 episoade => nu merge
+-- serialul are deja 4 episoade => nu merge
 INSERT INTO episodes
 VALUES (20, 11, 'Wild at Heart', 'Elijah learns that Aya might have knowlege about an elusive weapon that can take down Original Vampire for good. Davina receives a tempting offer which brings closer to reuniting Kol.',
         42, '05-FEB-2016', 8.6, 6);
         
--- sezonul are deja 3 episoade => nu merge
+-- serialul are deja 4 episoade => nu merge
 UPDATE episodes
 SET season_id = 6
 WHERE episode_id = 7;
 
-SELECT * FROM episodes
-WHERE season_id = 6;
+SELECT * 
+FROM episodes JOIN seasons USING (season_id)
+WHERE series_id = 3;
 
--- sezonul are doar 2 episoade, deci nu merg inserate alte 3 => nu merge
+-- serialul are doar 3 episoade, deci nu merg inserate alte 3 => nu merge
 CREATE SEQUENCE sec_episodes
 START WITH 20
 INCREMENT BY 1;
@@ -122,14 +126,17 @@ INCREMENT BY 1;
 BEGIN
     FOR i IN 1..5 LOOP
         INSERT INTO episodes
-        VALUES (sec_episodes.NEXTVAL, 2, 'Red Queen', 'Octavia is forced to take guidance from an unlikely ally when the future of the bunker and all those inside it is jeopardized.',
-                42, '01-MAY-2018', 8.8, 10);
+        VALUES (sec_episodes.NEXTVAL, 2, 'Sara', 'Team Arrow is in pursuit of a new villain who poses a threat to Starling City. Meanwhile, Oliver is worried about not having heard from Thea.',
+                42, '15-OCT-2014', 8.5, 8);
     END LOOP;
 END;
 /
 
-SELECT * FROM episodes
-WHERE season_id = 10;
+DROP SEQUENCE sec_episodes;
+
+SELECT * 
+FROM episodes JOIN seasons USING (season_id)
+WHERE series_id = 4;
 
 DELETE FROM episodes
 WHERE episode_id = 19;
