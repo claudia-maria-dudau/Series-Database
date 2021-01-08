@@ -16,7 +16,9 @@ CREATE OR REPLACE PACKAGE pachet_1 IS
          sfarsit DATE)
     RETURN NUMBER;
     
-    PROCEDURE afisare_seriale;
+    PROCEDURE afisare_seriale_producator
+        (prenume producers.first_name%TYPE DEFAULT NULL,
+         nume producers.last_name%TYPE DEFAULT NULL);
 END pachet_1;
 /
 
@@ -239,64 +241,76 @@ CREATE OR REPLACE PACKAGE BODY pachet_1 IS
     END;
     
     
-    PROCEDURE afisare_seriale AS
+    PROCEDURE afisare_seriale_producator
+        (prenume producers.first_name%TYPE DEFAULT NULL,
+         nume producers.last_name%TYPE DEFAULT NULL)
+    AS
         TYPE pers IS RECORD (prenume producers.first_name%TYPE,
                              nume producers.last_name%TYPE);
-        TYPE prod IS TABLE OF pers;                       
-        v_producatori prod;
+        TYPE tab_pers IS TABLE OF pers;                       
         CURSOR actori (id_serial NUMBER) IS
             SELECT a.actor_id, a.first_name, a.last_name
             FROM actors a JOIN playing p ON(a.actor_id = p.actor_id)
             WHERE series_id = id_serial;
-        personaj pers;
+        personaje tab_pers;
+        id_producator producers.producer_id%TYPE;
         i INTEGER;
         exista_actori BOOLEAN;
     BEGIN
+        IF prenume IS NULL AND nume IS NULL THEN
+            RAISE_APPLICATION_ERROR(-20007, 'Nu poate sa fie si numele si prenumele NULL');
+        END IF;
+        
+        -- determinarea id-ului producatorului dat
+        -- (acest pas se face separat ca sa se poata arunca exceptie in cazul in care
+        -- nu exista producatorul sau exista mai multi producatori cu acest nume)
+        IF nume IS NOT NULL AND prenume IS NOT NULL THEN
+            -- numele si prenumele nusunt NULL
+            SELECT producer_id INTO id_producator
+            FROM producers
+            WHERE first_name = prenume 
+              AND last_name = nume;
+        ELSIF nume IS NULL AND prenume IS NOT NULL THEN
+            -- prenumele nu este NULL
+            SELECT producer_id INTO id_producator
+            FROM producers
+            WHERE first_name = prenume;
+        ELSE
+            -- numele nu este NULL
+            SELECT producer_id INTO id_producator
+            FROM producers
+            WHERE last_name = nume;
+        END IF;
+    
         FOR serial IN (SELECT series_id, title
-                       FROM series) 
+                       FROM produced_by JOIN series USING (series_id)
+                       WHERE producer_id = id_producator)
                    LOOP
             -- afisare serial
-            DBMS_OUTPUT.PUT_LINE('----------------------------------------------------------');
             DBMS_OUTPUT.PUT_LINE('--- ' || UPPER(serial.title) || ' ---'); 
             
-            -- afisare producatori
-            DBMS_OUTPUT.PUT('--- Producatori: ');
-            
-            SELECT p.first_name, p.last_name BULK COLLECT INTO v_producatori
-            FROM producers p JOIN produced_by ps ON (p.producer_id = ps.producer_id)
-            WHERE series_id = serial.series_id;
-    
-            IF v_producatori.count() = 0 THEN
-                -- nu exista producatori
-                DBMS_OUTPUT.PUT('nu exista producatori');
-            ELSE
-                i := v_producatori.FIRST;
-                WHILE i<= v_producatori.LAST LOOP
-                    DBMS_OUTPUT.PUT(v_producatori(i).prenume || ' ' || v_producatori(i).nume);
-                    IF i <> v_producatori.LAST THEN
-                        DBMS_OUTPUT.PUT(', ');
-                    END IF;
-                    
-                    i := v_producatori.NEXT(i);
-                END LOOP;
-            END IF;
-            
-            DBMS_OUTPUT.PUT(' ---');
-            DBMS_OUTPUT.PUT_LINE('');
-            DBMS_OUTPUT.PUT_LINE('----------------------------------------------------------');
-            
             -- afisare actori
+            DBMS_OUTPUT.PUT_LINE('--- Actori: ');
             exista_actori := FALSE;
             FOR actor in actori(serial.series_id) LOOP
                 exista_actori := TRUE;
                 DBMS_OUTPUT.PUT(actor.first_name || ' ' || actor.last_name || ' - ');
                 
-                -- afisare personajul jucat de actor
-                SELECT c.first_name, c.last_name INTO personaj
+                -- afisare personaje jucate de actor
+                SELECT c.first_name, c.last_name BULK COLLECT INTO personaje
                 FROM characters c JOIN playing p USING(character_id)
                 WHERE actor_id = actor.actor_id;
                 
-                DBMS_OUTPUT.PUT(personaj.prenume || ' ' || personaj.nume);
+                i := personaje.FIRST;
+                WHILE i<= personaje.LAST LOOP
+                    DBMS_OUTPUT.PUT(personaje(i).prenume || ' ' || personaje(i).nume);
+                    IF i <> personaje.LAST THEN
+                        DBMS_OUTPUT.PUT(', ');
+                    END IF;
+                    
+                    i := personaje.NEXT(i);
+                END LOOP;
+                
                 DBMS_OUTPUT.PUT_LINE('');
             END LOOP;
             
@@ -306,7 +320,13 @@ CREATE OR REPLACE PACKAGE BODY pachet_1 IS
             END IF;
             
             DBMS_OUTPUT.PUT_LINE('');
+            DBMS_OUTPUT.PUT_LINE('----------------------------------------------------------');
         END LOOP;
+    EXCEPTION
+        WHEN no_data_found THEN
+            RAISE_APPLICATION_ERROR(-20004, 'Nu exista producator cu numele dat');
+        WHEN too_many_rows THEN
+            RAISE_APPLICATION_ERROR(-20005, 'Exista mai multi producatori cu acest nume');
     END;
 END pachet_1;
 /
