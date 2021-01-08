@@ -387,7 +387,7 @@ CREATE OR REPLACE PACKAGE BODY inf_actori IS
           AND a.first_name = INITCAP(prenume)
           AND a.last_name = INITCAP(nume);
         
-        RETURN screen_time;
+        RETURN NVL(screen_time, 0);
     END;
     
     
@@ -398,17 +398,41 @@ CREATE OR REPLACE PACKAGE BODY inf_actori IS
          nume_serial series.title%TYPE)
     RETURN NUMBER IS 
         screen_time NUMBER(5) := 0;
+        id_actor actors.actor_id%TYPE;
+        id_serial series.series_id%TYPE;
+        identif NUMBER := 1;
     BEGIN
+        -- pentru a verifica daca actorul exista
+        SELECT actor_id INTO id_actor
+        FROM actors
+        WHERE first_name = prenume
+          AND last_name = nume;
+        
+        identif := 2;
+        
+        -- pentru a verifica daca serialul exista
+        SELECT series_id INTO id_serial
+        FROM series
+        WHERE title = INITCAP(nume_serial);
+        
         -- determinare screen_time_sez pt actorul pt fiecare sezon al serialului
         FOR sez IN (SELECT season_number
                        FROM seasons JOIN series s USING (series_id)
                        WHERE s.title = INITCAP(nume_serial)) 
                       LOOP
          
-            screen_time := screen_time + nvl(screen_time_sez(prenume, nume, nume_serial, sez.season_number), 0);
+            screen_time := screen_time + screen_time_sez(prenume, nume, nume_serial, sez.season_number);
         END LOOP;
         
         RETURN screen_time;
+    EXCEPTION
+        WHEN no_data_found THEN
+            IF identif = 1 THEN
+                RAISE_APPLICATION_ERROR(-20009, 'Numele actorului dat nu este bun');
+            ELSE
+                RAISE_APPLICATION_ERROR(-20010, 'Numele serialului dat nu este bun');
+            END IF;
+            RETURN -1;
     END;
     
     FUNCTION actori_principali
@@ -423,7 +447,13 @@ CREATE OR REPLACE PACKAGE BODY inf_actori IS
         v_pers tab_pers;
         v_eps eps;
         nr_act NUMBER(2) := 0;
+        id_serial series.series_id%TYPE;
     BEGIN
+        -- pentru a verifica daca serialul exista
+        SELECT series_id INTO id_serial
+        FROM series
+        WHERE title = INITCAP(nume_serial);
+        
         actori := tab_actori();
         
         -- obtinere actorii ce joaca in serialul dat
@@ -431,11 +461,6 @@ CREATE OR REPLACE PACKAGE BODY inf_actori IS
         FROM actors a JOIN playing USING (actor_id)
                       JOIN series USING (series_id)
         WHERE title = INITCAP(nume_serial);
-        
-        IF v_actori.COUNT = 0 THEN
-            RAISE_APPLICATION_ERROR(-20009, 'Numele serialului dat nu este bun');
-            RETURN -1;
-        END IF;
         
         FOR i IN v_actori.FIRST..v_actori.LAST LOOP
             IF screen_time_serial(v_actori(i).prenume, v_actori(i).nume, nume_serial) >= 0.75 * durata_serial(nume_serial) THEN
@@ -474,6 +499,10 @@ CREATE OR REPLACE PACKAGE BODY inf_actori IS
         END LOOP;
         
         RETURN nr_act;
+    EXCEPTION
+        WHEN no_data_found THEN
+            RAISE_APPLICATION_ERROR(-20010, 'Numele serialului dat nu este bun');
+            RETURN -1;
     END;
     
     PROCEDURE afis_actori_principali
@@ -510,3 +539,9 @@ EXECUTE inf_actori.afis_actori_principali('Supernatural');
 
 -- nu exista serialul in baza de date => nu merge
 EXECUTE inf_actori.afis_actori_principali('The Flash');
+
+-- nu exista actorulul => nu merge
+SELECT inf_actori.screen_time_serial('John', 'Doe', 'Supernatural') FROM dual;
+
+-- nu exista serialul => nu merge
+SELECT inf_actori.screen_time_serial('Stephen', 'Amell', 'Arr') FROM dual;
