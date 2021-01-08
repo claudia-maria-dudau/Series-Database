@@ -405,7 +405,7 @@ CREATE OR REPLACE PACKAGE BODY inf_actori IS
                        WHERE s.title = INITCAP(nume_serial)) 
                       LOOP
          
-            screen_time := screen_time + screen_time_sez (prenume, nume, nume_serial, sez.season_number);
+            screen_time := screen_time + nvl(screen_time_sez(prenume, nume, nume_serial, sez.season_number), 0);
         END LOOP;
         
         RETURN screen_time;
